@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+ignore/
+bin/
+# A bare `go build` in the root leaves the binary here; `make build` puts it in bin/.
+/eml-list-to-noeml

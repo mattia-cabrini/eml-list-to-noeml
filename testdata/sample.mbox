@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+# Test mailbox. These lines precede the first "From " line, so they belong to
+# no message. Two messages follow, delivered in the same second; the last one
+# has no separator line after it and no final newline, as the last message of
+# a mailbox may, and its body holds two lines that begin like a separator line
+# and must not be taken for one.
+From root@host  Fri Sep  5 03:00:00 2026
+From: Cron Daemon <root@host>
+To: root@host
+Subject: =?utf-8?q?Ciao_=C3=A8?=
+
+Body one.
+
+From root@host  Fri Sep  5 03:00:00 2026
+From: root@host
+To: root@host
+Subject: Second
+
+>From the body
+From the desk of Bob
+Body two.
