@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // The levels, from the most to the least severe.
@@ -92,12 +93,15 @@ func openLog() {
 	}
 }
 
-// logf writes one line, if the level deserves it.
+// logf writes one line, if the level deserves it: the time, the level, the
+// text. The time is ISO 8601 with the zone, the same on every line wherever it
+// lands; syslog stamps its own too, which is the price of a stamp on the
+// terminal and in whatever file a pipe may end up in.
 func logf(level int, format string, args ...interface{}) {
 	if level > logLevel {
 		return
 	}
-	line := levelPrefix[level] + " " + fmt.Sprintf(format, args...)
+	line := time.Now().Format(time.RFC3339) + " " + levelPrefix[level] + " " + fmt.Sprintf(format, args...)
 	for _, destination := range destinations {
 		if destination.write(level, line) == nil {
 			return

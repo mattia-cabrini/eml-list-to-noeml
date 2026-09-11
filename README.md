@@ -107,8 +107,8 @@ run SERVICE_CONFIG
    │        report the From lines of its body        WARN   byte N, LINE: no delivery time on it, so it does
    │          that do not start a message                   not start a message
    │        skip it if an identical one came before  WARN   MESSAGE is there twice, byte for byte
-   │        write NAME.noeml.part.unsigned           ERROR  cannot write the unsigned envelope of MESSAGE (stops this mailbox)
-   │        let go of the message's bytes            DEBUG  wrote NAME.noeml.part.unsigned
+   │        write NAME.noeml.part.unsigned           ERROR  cannot write out MESSAGE (stops this mailbox)
+   │        let go of the message's bytes            DEBUG  written out: NAME.noeml
    │
    ├─ 3. for each unsigned envelope written:         ERROR  cannot sign the envelope of MESSAGE (stops this mailbox)
    │        gpg signs it, cmc-eml seals it           DEBUG  signed NAME.noeml
@@ -350,13 +350,14 @@ journalctl -ft eml-list-to-noeml           # Ubuntu
 tail -f /var/log/messages                  # FreeBSD
 ```
 
-Every line carries its level in front of it:
+Every line carries the time, ISO 8601 with the zone, and its level in front of
+it, wherever it lands:
 
 ```
-[ INFO    ] depositing into /var/spool/noeml, as root:external-log (0:2000), mode 0440
-[ INFO    ] root: converting /var/mail/root
-[ INFO    ] root: deposited 1757041200_root@host_da39a3ee....noeml
-[ INFO    ] root: 1 envelope(s) of 1 deposited
+2026-09-05T03:01:00+02:00 [ INFO    ] depositing into /var/spool/noeml, as root:external-log (0:2000), mode 0440
+2026-09-05T03:01:00+02:00 [ INFO    ] root: converting /var/mail/root
+2026-09-05T03:01:02+02:00 [ INFO    ] root: deposited 1757041200_root@host_da39a3ee....noeml
+2026-09-05T03:01:02+02:00 [ INFO    ] root: 1 envelope(s) of 1 deposited
 ```
 
 A line has to reach the log whatever the state of the machine, since there is
@@ -385,6 +386,22 @@ belongs, and is not written to `/var/log/messages` unless `syslog.conf` says so.
 
 A run that finds another run still going, or a mailbox held by another program,
 writes a WARNING and leaves the work to the next minute.
+
+### Dry run
+
+```sh
+eml-list-to-noeml dry-run /var/mail/root /tmp/noeml
+```
+
+Converts the whole of a mailbox, watermark or not, into plain envelopes, the
+same headers, notice and attachment as the service makes but unsigned and
+addressed to `someone@example.com`, and deposits them into the directory given,
+mode 0440, owned by whoever runs it. It reads no configuration and needs
+nothing installed but `cmc-eml`, so it runs on any machine as any user who can
+read the mailbox; nothing of the service is touched, no watermark read or
+written, no run lock taken. The envelopes are built in a directory of their own
+inside the one given, `.eml-list-to-noeml.build`, which goes away at the end.
+The log stays on the terminal.
 
 ## Remove
 
@@ -420,6 +437,7 @@ setup.go         installed paths (per operating system), prompts, how an install
 install.go       the install command
 addconfig.go     the config command
 purge.go         the purge command
+dryrun.go        the dry-run command: a whole mailbox into plain envelopes, in a directory of your choice
 *_test.go        unit tests: reading a mailbox and the configuration files, envelope names,
                  the notice and the cmc-eml commands, the watermark; helpers_test.go is what they share
 testdata/        the mailbox and the configuration files the tests read

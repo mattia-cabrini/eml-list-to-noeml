@@ -13,10 +13,11 @@ import (
 )
 
 const usage = `usage:
-  eml-list-to-noeml run SERVICE_CONFIG   convert the new messages (what the cron job runs)
-  eml-list-to-noeml install              install or update the service (root)
-  eml-list-to-noeml config               add or update a mailbox configuration (root)
-  eml-list-to-noeml purge                remove program, configuration, cron job and watermarks (root)
+  eml-list-to-noeml run SERVICE_CONFIG          convert the new messages (what the cron job runs)
+  eml-list-to-noeml dry-run MAILBOX DEPOSIT_DIR  convert the whole mailbox into that directory: no watermark, no signature
+  eml-list-to-noeml install                     install or update the service (root)
+  eml-list-to-noeml config                      add or update a mailbox configuration (root)
+  eml-list-to-noeml purge                       remove program, configuration, cron job and watermarks (root)
 `
 
 func main() {
@@ -26,6 +27,10 @@ func main() {
 	case len(os.Args) == 3 && os.Args[1] == "run":
 		if !run(os.Args[2]) {
 			os.Exit(1) // what went wrong is in the log already
+		}
+	case len(os.Args) == 4 && os.Args[1] == "dry-run":
+		if err := dryRun(os.Args[2], os.Args[3]); err != nil {
+			fatalf("%v", err)
 		}
 	case len(os.Args) == 2 && setupCommands[os.Args[1]] != nil:
 		if err := asRoot(setupCommands[os.Args[1]]); err != nil {

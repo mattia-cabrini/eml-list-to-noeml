@@ -104,7 +104,7 @@ func convertMailbox(service ServiceConfig, own owner, configPath string) bool {
 
 	// Phase 2: read the mailbox, writing out the unsigned envelope of each
 	// message to deposit. Phase 3: sign them all.
-	unsigned, read := writeUnsignedEnvelopes(mailbox, watermark)
+	unsigned, read := writeOutMessages(mailbox, watermark, (*Message).WriteUnsigned)
 	enveloped, signed := signEnvelopes(mailbox, unsigned)
 
 	// Phase 4: deposit, and update the watermark. The deposit runs even when
@@ -115,31 +115,36 @@ func convertMailbox(service ServiceConfig, own owner, configPath string) bool {
 	return read && signed && deposited && marked
 }
 
-// writeUnsignedEnvelopes is phase 2, the first of the two passes that make an
-// envelope: it reads the mailbox and turns every message the watermark does
-// not cover into an unsigned envelope on disk, which is what gpg will sign. It
-// returns the messages that now have one, with their bytes let go.
+// build is what a message becomes on disk the moment it is read: the unsigned
+// envelope the service goes on to sign, or the plain one the dry run deposits
+// as it is. Either lets go of the message's bytes.
+type build func(m *Message, path string, mailbox MailboxConfig) error
+
+// writeOutMessages is phase 2, the first of the two passes that make an
+// envelope: it reads the mailbox and writes out into the working directory
+// every message the watermark does not cover, as build says. It returns the
+// messages written out, with their bytes let go.
 //
-// A message that cannot be turned into one stops the mailbox: skipping it
-// would send the messages behind it and lose it silently, so it is reported
-// and the ones before it go on.
-func writeUnsignedEnvelopes(mailbox MailboxConfig, watermark Watermark) ([]*Message, bool) {
+// A message that cannot be written out stops the mailbox: skipping it would
+// send the messages behind it and lose it silently, so it is reported and the
+// ones before it go on.
+func writeOutMessages(mailbox MailboxConfig, watermark Watermark, build build) ([]*Message, bool) {
 	reader, ok := openMailbox(mailbox, watermark)
 	if reader == nil {
 		return nil, ok
 	}
 	defer reader.Close()
 
-	written := map[string]bool{}
-	var unsigned []*Message
+	seen := map[string]bool{}
+	var written []*Message
 	for {
 		message, err := reader.Next()
 		if err != nil {
 			logf(ERROR, "%s: reading %s: %v", mailbox.Name, mailbox.File, err)
-			return unsigned, false
+			return written, false
 		}
 		if message == nil {
-			return unsigned, true
+			return written, true
 		}
 
 		// Two messages of the same second that are the same byte for byte,
@@ -147,20 +152,19 @@ func writeUnsignedEnvelopes(mailbox MailboxConfig, watermark Watermark) ([]*Mess
 		// so building the second would only write the first over again. It
 		// takes a sender that writes neither Message-ID nor Date.
 		name := message.EnvelopeName()
-		if written[name] {
+		if seen[name] {
 			logf(WARNING, "%s: %s of %s is there twice, byte for byte: one envelope carries both",
 				mailbox.Name, message, mailbox.File)
 			continue
 		}
-		written[name] = true
+		seen[name] = true
 
-		if err := message.WriteUnsigned(filepath.Join(mailbox.WorkDir, name), mailbox); err != nil {
-			logf(ERROR, "%s: cannot write the unsigned envelope of %s of %s: %v",
-				mailbox.Name, message, mailbox.File, err)
-			return unsigned, false
+		if err := build(message, filepath.Join(mailbox.WorkDir, name), mailbox); err != nil {
+			logf(ERROR, "%s: cannot write out %s of %s: %v", mailbox.Name, message, mailbox.File, err)
+			return written, false
 		}
-		logf(DEBUG, "%s: wrote %s%s", mailbox.Name, name, unsignedSuffix)
-		unsigned = append(unsigned, message)
+		logf(DEBUG, "%s: written out: %s", mailbox.Name, name)
+		written = append(written, message)
 	}
 }
 

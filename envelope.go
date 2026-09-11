@@ -19,6 +19,10 @@
 // cmc-eml calls the unsigned envelope "the clear message" (print-clear-eml,
 // clear-message): that is why the file it writes is a .clear.eml and the
 // signature of it a .clear.asc. Here it is the unsigned envelope throughout.
+//
+// The dry run builds a third thing, the plain envelope: the same headers and
+// the same content in one pass of cmc-eml, and no signature. The service never
+// sends one.
 
 package main
 
@@ -146,19 +150,11 @@ func (m *Message) WriteUnsigned(path string, mailbox MailboxConfig) error {
 	file := filesOf(path)
 	defer removeFiles(file.message, file.body, file.clear)
 
-	if err := os.WriteFile(file.message, m.Content, 0o600); err != nil {
+	if err := m.writePieces(file, n); err != nil {
 		return err
 	}
-	if err := os.WriteFile(file.body, []byte(n.body()), 0o600); err != nil {
-		return err
-	}
-	err := cmcEML(
-		command("set-body", "path", file.body, "mime-type", "text/plain", "fmt", sevenBitEncoding),
-		command("add-attachment", "path", file.message, "filename", n.attachmentName(),
-			"mime-type", attachmentMIMEType, "fmt", base64Encoding),
-		command("print-clear-eml", "path", file.clear),
-	)
-	if err != nil {
+	commands := append(n.contentCommands(file), command("print-clear-eml", "path", file.clear))
+	if err := cmcEML(commands); err != nil {
 		return err
 	}
 	m.Content = nil // it is on disk now, inside the unsigned envelope
@@ -184,6 +180,37 @@ func (m *Message) Sign(path string, mailbox MailboxConfig) error {
 	}
 	removeFiles(file.unsigned) // the envelope is built: the unsigned one is spent
 	return nil
+}
+
+// WritePlain makes the whole envelope in one go and leaves it at path: the
+// same headers, the same notice and the same message attached, and no
+// signature. It is what the dry run builds, having no key to sign with. Like
+// WriteUnsigned it lets go of the message's bytes before it returns.
+func (m *Message) WritePlain(path string, mailbox MailboxConfig) error {
+	n := m.notice(mailbox)
+	file := filesOf(path)
+	defer removeFiles(file.message, file.body, file.partial)
+
+	if err := m.writePieces(file, n); err != nil {
+		return err
+	}
+	commands := n.headerCommands(mailbox.Recipient)
+	commands = append(commands, n.contentCommands(file)...)
+	commands = append(commands, command("print-clear-eml", "path", file.partial))
+	if err := cmcEML(commands); err != nil {
+		return err
+	}
+	m.Content = nil // it is on disk now, inside the envelope
+	return os.Rename(file.partial, file.envelope)
+}
+
+// writePieces puts on disk what cmc-eml reads from files: the message to
+// attach and the notice to set as the body.
+func (m *Message) writePieces(file buildFiles, n notice) error {
+	if err := os.WriteFile(file.message, m.Content, 0o600); err != nil {
+		return err
+	}
+	return os.WriteFile(file.body, []byte(n.body()), 0o600)
 }
 
 // notice is what the recipient of this message will read. Both passes need it.
@@ -216,6 +243,29 @@ func (n notice) attachmentName() string {
 	return fmt.Sprintf("%s-%d.eml", n.user, n.message.Key.Received.Unix())
 }
 
+// contentCommands are the cmc-eml commands that put the notice and the message
+// into the entity being built: the body from one file, the attachment from
+// another.
+func (n notice) contentCommands(file buildFiles) []string {
+	return []string{
+		command("set-body", "path", file.body, "mime-type", "text/plain", "fmt", sevenBitEncoding),
+		command("add-attachment", "path", file.message, "filename", n.attachmentName(),
+			"mime-type", attachmentMIMEType, "fmt", base64Encoding),
+	}
+}
+
+// headerCommands are the cmc-eml commands that give the envelope its headers.
+// There is no From: SimpleQueueMailing adds it when sending.
+func (n notice) headerCommands(recipient string) []string {
+	return []string{
+		header("To", recipient),
+		textHeader("Subject", n.subject()),
+		header("Date", time.Now().Format(time.RFC1123Z)),
+		header("Message-ID", fmt.Sprintf("<%s@%s>", n.message.Key.SHA1, n.host)),
+		header("Auto-Submitted", "auto-generated"),
+	}
+}
+
 // gpgSign writes the detached, ASCII armored OpenPGP signature of the unsigned
 // envelope.
 //
@@ -243,15 +293,9 @@ func gpgSign(file buildFiles, mailbox MailboxConfig) error {
 // multipart/signed envelope, under the envelope headers. It writes the partial
 // name: the envelope takes its own with the rename that follows.
 func seal(file buildFiles, n notice, recipient string) error {
-	return cmcEML(
-		header("To", recipient),
-		textHeader("Subject", n.subject()),
-		header("Date", time.Now().Format(time.RFC1123Z)),
-		header("Message-ID", fmt.Sprintf("<%s@%s>", n.message.Key.SHA1, n.host)),
-		header("Auto-Submitted", "auto-generated"),
-		command("print-signed-eml",
-			"clear-message", file.unsigned, "signature", file.signature, "path", file.partial),
-	)
+	commands := append(n.headerCommands(recipient), command("print-signed-eml",
+		"clear-message", file.unsigned, "signature", file.signature, "path", file.partial))
+	return cmcEML(commands)
 }
 
 // header is the cmc-eml command that adds a header whose value is written as
@@ -287,7 +331,7 @@ func quoted(value string) string {
 }
 
 // cmcEML feeds the commands to cmc-eml, one per line, then tells it to quit.
-func cmcEML(commands ...string) error {
+func cmcEML(commands []string) error {
 	script := strings.Join(commands, "\n") + "\ndo=quit\n"
 	return runProgram(strings.NewReader(script), "cmc-eml")
 }
